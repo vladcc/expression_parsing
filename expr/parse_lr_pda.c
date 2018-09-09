@@ -24,7 +24,8 @@ enum {START = 100, STATMNT, EXPR, TERM, FACTOR};
 
 static void go(void);
 static bool match(int what);
-static void error(const char * what);
+static void error_expect(const char * what);
+static void error_msg(const char * msg);
 
 int fcalls;
 #define count_call() 	++fcalls
@@ -38,7 +39,7 @@ int fcalls;
 #define dbg_report()
 #endif
 
-#define vm_push() 		vm_load_num(atoi(lex_get_num())), vm_exec(vmPUSH)
+#define vm_push() vm_load_num(atoi(lex_get_num())), vm_exec(vmPUSH)
 
 //------------------------------------------------------------------------------
 
@@ -74,7 +75,7 @@ static void push(int state)
 	count_call();
 	if(sp >= MAX_STATES)
 	{
-		fprintf(stderr, "Err: stack full\n"); 
+		fprintf(stderr, "Err: parser: stack full\n"); 
 		exit(EXIT_FAILURE);
 	} 
 	stack[sp++] = state;
@@ -84,9 +85,9 @@ static void push(int state)
 static void pop(void)
 {
 	count_call();
-	if(sp < 0)
+	if(sp <= 0)
 	{
-		fprintf(stderr, "Err: attempt to pop an empty stack\n");
+		fprintf(stderr, "Err: parser: attempt to pop an empty stack\n");
 		exit(EXIT_FAILURE);
 	} 
 	--sp;
@@ -101,11 +102,7 @@ void go(void)
 	{
 		dbg_report();
 		switch (state())
-		{
-			case STATMNT:
-				return;
-				break;
-				
+		{				
 			case START:
 			case PLUS:
 			case MINUS:			
@@ -121,7 +118,7 @@ void go(void)
 					break;
 				}
 				else 			
-					error("number or (");
+					error_expect("number or (");
 				lex_advance();	
 				push(FACTOR);
 				break;
@@ -132,10 +129,23 @@ void go(void)
 				if (LPAR == state())
 					pop(); // lpar
 				else
-					error(")");
+					error_msg("Unmatched parenthesis");
 					
 				lex_advance();
 				push(FACTOR);
+				break;
+				
+			case SEMI:
+				pop(); // semi
+				pop(); // expr
+				push(STATMNT);
+				break;
+			
+			case STATMNT:
+				pop(); // statmnt
+				if (state() != START)
+					error_msg("Malformed expression");
+				return;
 				break;
 				
 			case EXPR:
@@ -143,12 +153,10 @@ void go(void)
 				if (PLUS == state() || MINUS == state())
 				{
 					vm_exec((PLUS == state()) ? vmADD : vmSUB);
-					pop(); // plus
+					pop(); // plus | minus
 					pop(); // expr
 					push(TERM);
 				}
-				else if (START == state() && match(SEMI))
-					push(STATMNT);
 				else
 				{
 					push(EXPR);
@@ -158,9 +166,11 @@ void go(void)
 						push(MINUS);
 					else if (match(RPAR))
 						push(RPAR);
+					else if (match(SEMI))
+						push(SEMI);
 					else
 					{
-						error("+ or *");
+						error_expect("+, -, *, /, ), or ;");
 						pop();
 					}
 				}
@@ -171,7 +181,7 @@ void go(void)
 				if (MULT == state() || DIV == state())
 				{
 					vm_exec((MULT == state()) ? vmMULT : vmDIV);
-					pop(); // mult
+					pop(); // mult | div
 					pop(); // term
 					push(FACTOR);
 				}
@@ -209,11 +219,24 @@ bool match(int what)
 }
 //------------------------------------------------------------------------------
 
-void error(const char * str)
+void error_expect(const char * str)
 {
 	vm_stop();
 	fprintf(stderr, "Err: line %d: '%s' expected but got '%s' instead\n",
 		   lex_get_line(), str, lex_tok_str(lex_current()));
+	fprintf(stderr, "%s\n", lex_get_str());
+	fprintf(stderr, "%*c\n", lex_get_pos(), '^');
+	
+	if (match(EOL))
+		exit(EXIT_FAILURE);
+	return;
+}
+//------------------------------------------------------------------------------
+
+void error_msg(const char * msg)
+{
+	vm_stop();
+	fprintf(stderr, "Err: line %d: %s\n", lex_get_line(), msg);
 	fprintf(stderr, "%s\n", lex_get_str());
 	fprintf(stderr, "%*c\n", lex_get_pos(), '^');
 	
